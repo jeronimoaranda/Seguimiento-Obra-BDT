@@ -12,6 +12,7 @@ const SegCantView = ({ quantities, saveData, currentUserEmail, canEdit }) => {
     const [currentEditing, setCurrentEditing] = useState({ discipline: '', activity: '' });
     const [cutoffDateISO, setCutoffDateISO] = useState(''); 
     const [globalTargetDate, setGlobalTargetDate] = useState('2026-04-17'); 
+    const [availableDates, setAvailableDates] = useState([]); // Nueva lista para el selector
 
     useEffect(() => {
         if (quantities && quantities.length > 0) {
@@ -21,10 +22,12 @@ const SegCantView = ({ quantities, saveData, currentUserEmail, canEdit }) => {
             const detectedHeaders = Utils.sortHeaders(Array.from(allKeys));
             setHeaders(detectedHeaders);
 
-            // Calcular Fecha de Corte Dinámica
+            // Calcular Fechas Disponibles (Columnas de fecha en el archivo)
             const dateCols = detectedHeaders.filter(h => !isNaN(Date.parse(h)) && h.includes('-'));
             dateCols.sort((a, b) => new Date(a) - new Date(b));
-            
+            setAvailableDates(dateCols);
+
+            // Calcular Fecha de Corte Dinámica Inicial (Semana inmediatamente inferior a Hoy)
             const todayStr = new Date().toISOString().split('T')[0];
             let foundCutoff = '';
             
@@ -35,7 +38,11 @@ const SegCantView = ({ quantities, saveData, currentUserEmail, canEdit }) => {
                     break; 
                 }
             }
-            setCutoffDateISO(foundCutoff || (dateCols.length > 0 ? dateCols[0] : todayStr));
+            // Si no encuentra fecha anterior (ej. proyecto futuro), usa la primera, o si hay, la encontrada.
+            // Si el usuario ya seleccionó una fecha manualmente, respetarla (aunque al recargar data se suele resetear)
+            if (!cutoffDateISO) {
+                setCutoffDateISO(foundCutoff || (dateCols.length > 0 ? dateCols[0] : todayStr));
+            }
 
             const uniqueCharts = [];
             const seen = new Set();
@@ -51,6 +58,7 @@ const SegCantView = ({ quantities, saveData, currentUserEmail, canEdit }) => {
             setHeaders(["Curva", "Disciplina", "Actividad", "Alcance", "Actual", "Remanente", "unidad"]);
             setChartList([]);
             setCutoffDateISO(new Date().toISOString().split('T')[0]);
+            setAvailableDates([]);
         }
     }, [quantities]);
 
@@ -112,7 +120,7 @@ const SegCantView = ({ quantities, saveData, currentUserEmail, canEdit }) => {
         }
         newData[idx][manualEntry.date] = parseFloat(manualEntry.value);
 
-        // Recalcular Actual
+        // Recalcular Actual basado en la fecha de corte seleccionada visualmente
         const dateCols = [...headers];
         if (!dateCols.includes(manualEntry.date)) dateCols.push(manualEntry.date);
         
@@ -120,9 +128,10 @@ const SegCantView = ({ quantities, saveData, currentUserEmail, canEdit }) => {
         let cutoffIdx = -1;
         const validDates = Utils.sortHeaders(dateCols.filter(h => !isNaN(Date.parse(h))));
         
-        const todayStr = new Date().toISOString().split('T')[0];
+        // Usamos cutoffDateISO para que el cálculo del "Actual" sea consistente con lo que ve el usuario
+        const targetCutoff = cutoffDateISO || new Date().toISOString().split('T')[0];
         
-        for(let i=0; i<validDates.length; i++) { if(validDates[i] <= todayStr) cutoffIdx = i; else break; }
+        for(let i=0; i<validDates.length; i++) { if(validDates[i] <= targetCutoff) cutoffIdx = i; else break; }
         
         validDates.forEach((d, i) => {
             if (i <= cutoffIdx) {
@@ -142,7 +151,7 @@ const SegCantView = ({ quantities, saveData, currentUserEmail, canEdit }) => {
     return (
         <div className="min-h-screen bg-slate-50">
             {/* Header de la Solapa - Limpio y Responsivo */}
-            {/* CORRECCIÓN: z-10 para que sea menor que el MainLayout (z-50) */}
+            {/* z-10 para evitar superposición con el menú principal (z-50) */}
             <div className="mb-6 bg-white rounded-xl shadow-sm p-4 md:p-6 sticky top-0 z-10 border border-slate-200">
                 <div className="flex flex-col lg:flex-row justify-between items-start lg:items-center gap-4">
                     {/* Título y Subtítulo - Flexible */}
@@ -151,9 +160,24 @@ const SegCantView = ({ quantities, saveData, currentUserEmail, canEdit }) => {
                             <Grid className="text-blue-600 w-6 h-6 flex-shrink-0" /> 
                             <span className="truncate">Seguimiento de Cantidades</span>
                         </h1>
-                        <p className="text-slate-500 text-sm mt-1 truncate">
-                            Visualización Multi-Actividad | Corte: {formatDateForDisplay(cutoffDateISO)}
-                        </p>
+                        <div className="flex items-center gap-2 mt-1 text-slate-500 text-sm flex-wrap">
+                            <span>Visualización Multi-Actividad |</span>
+                            <div className="flex items-center gap-1 bg-slate-100 rounded px-2 py-0.5 border border-slate-200">
+                                <span className="text-xs font-bold text-slate-400 uppercase mr-1">Corte:</span>
+                                <select 
+                                    value={cutoffDateISO} 
+                                    onChange={(e) => setCutoffDateISO(e.target.value)}
+                                    className="bg-transparent text-sm font-bold text-slate-700 outline-none cursor-pointer p-0 border-none focus:ring-0 appearance-none hover:text-blue-600 transition-colors"
+                                    title="Cambiar fecha de corte"
+                                >
+                                    {availableDates.map(d => (
+                                        <option key={d} value={d}>{formatDateForDisplay(d)}</option>
+                                    ))}
+                                    {availableDates.length === 0 && <option value="">Sin fechas disponibles</option>}
+                                </select>
+                                <Edit size={12} className="text-slate-400 ml-1 pointer-events-none"/>
+                            </div>
+                        </div>
                     </div>
                     
                     {/* Controles - Alineados a la derecha en Desktop, envolventes en Mobile */}
@@ -178,9 +202,9 @@ const SegCantView = ({ quantities, saveData, currentUserEmail, canEdit }) => {
                                 discipline={item.discipline}
                                 activity={item.activity}
                                 rawData={quantities}
-                                dateColumns={normalizedDateColumns} 
+                                dateColumns={normalizedDateColumns} // USAR FECHAS NORMALIZADAS
                                 isSourceCumulative={isSourceCumulative}
-                                TODAY_ISO={cutoffDateISO} 
+                                TODAY_ISO={cutoffDateISO} // USAR LA FECHA SELECCIONADA POR EL USUARIO
                                 globalTargetDate={globalTargetDate}
                                 onOpenModal={openEditModal}
                             />
